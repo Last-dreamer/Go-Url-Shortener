@@ -6,6 +6,7 @@ import (
 	"github.com/gofiber/fiber"
 )
 
+// !
 func ResolveURL(c *fiber.Ctx) {
 
 	url := c.Params("url")
