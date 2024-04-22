@@ -7,8 +7,10 @@ import (
 	"url-shortner/database"
 	"url-shortner/helpers"
 
+	"github.com/docker/distribution/uuid"
 	"github.com/go-redis/redis"
 	"github.com/gofiber/fiber"
+	"github.com/google/uuid"
 )
 
 type Request struct {
@@ -63,7 +65,32 @@ func ShortenURL(c *fiber.Ctx) error {
 	// enforce https etc
 	body.URL = helpers.EnforceHTTP(body.URL)
 
-	r2.Decr(c.IP())
+	//
+	var id string
 
+	if body.CustomShort == "" {
+		id = uuid.New().String()[:6]
+	} else {
+		id = body.CustomShort
+	}
+
+	r := database.CreateClient(0)
+	defer r.Close()
+
+	val2, _ := r.Get(id).Result()
+	if val2 != "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "short url is already in use"})
+	}
+
+	if body.Expiry == 0 {
+		body.Expiry = 24
+	}
+
+	err = r.Set(id, body.URL, body.Expiry*36000*time.Second).Err()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "cannot connect to server"})
+	}
+
+	r2.Decr(c.IP())
 	return nil
 }
