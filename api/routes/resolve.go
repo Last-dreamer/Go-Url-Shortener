@@ -8,7 +8,7 @@ import (
 )
 
 // ! just changing
-func ResolveURL(c *fiber.Ctx) error {
+func ResolveURL(c *fiber.Ctx) {
 
 	url := c.Params("url")
 
@@ -18,10 +18,10 @@ func ResolveURL(c *fiber.Ctx) error {
 	value, err := r.Get(url).Result()
 
 	if err == redis.Nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+		c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "short url is not found"})
 	} else if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "cannot connect to db",
 		})
 	}
@@ -32,5 +32,4 @@ func ResolveURL(c *fiber.Ctx) error {
 	incr.Incr("counter")
 	//! i have to see this if working .....
 	c.Redirect(value, 301)
-	return nil
 }

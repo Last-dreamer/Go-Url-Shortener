@@ -1,13 +1,14 @@
 package routes
 
 import (
+	"log"
 	"os"
 	"strconv"
 	"time"
 	"url-shortner/database"
 	"url-shortner/helpers"
 
-	"github.com/docker/distribution/uuid"
+	"github.com/asaskevich/govalidator"
 	"github.com/go-redis/redis"
 	"github.com/gofiber/fiber"
 	"github.com/google/uuid"
@@ -27,15 +28,16 @@ type Response struct {
 	XRateLimitRest time.Duration `json:"rate_limit_reset"`
 }
 
-func ShortenURL(c *fiber.Ctx) error {
+func ShortenURL(c *fiber.Ctx) {
+
+	log.Println("testing if working")
 	body := new(Request)
 
 	if err := c.BodyParser(&body); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "cannot parse json"})
+		c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "cannot parse json"})
 	}
 
 	// rate limiter
-
 	r2 := database.CreateClient(1)
 	defer r2.Close()
 
@@ -46,20 +48,20 @@ func ShortenURL(c *fiber.Ctx) error {
 		value, _ := strconv.Atoi(val)
 		if value <= 0 {
 			limit, _ := r2.TTL(c.IP()).Result()
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 				"error":            "rate limit exceeded",
 				"rate_limit_reset": limit / time.Nanosecond / time.Minute,
 			})
 		}
 	}
 
-	if !goValidator.IsUrl(body.URL) {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid URL"})
+	if !govalidator.IsURL(body.URL) {
+		c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid URL"})
 	}
 
 	// check for domain error
 	if !helpers.RemoveDomainError(body.URL) {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid URL"})
+		c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid URL"})
 	}
 
 	// enforce https etc
@@ -69,7 +71,7 @@ func ShortenURL(c *fiber.Ctx) error {
 	var id string
 
 	if body.CustomShort == "" {
-		id = uuid.New().String()[:6]
+		id = uuid.NewString()[:6]
 	} else {
 		id = body.CustomShort
 	}
@@ -79,18 +81,34 @@ func ShortenURL(c *fiber.Ctx) error {
 
 	val2, _ := r.Get(id).Result()
 	if val2 != "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "short url is already in use"})
+		c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "short url is already in use"})
 	}
 
 	if body.Expiry == 0 {
 		body.Expiry = 24
 	}
 
-	err = r.Set(id, body.URL, body.Expiry*36000*time.Second).Err()
+	err = r.Set(id, body.URL, body.Expiry*3600*time.Second).Err()
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "cannot connect to server"})
+		c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "cannot connect to server"})
+	}
+
+	resp := Response{
+		URL:            body.URL,
+		CustomShort:    "",
+		Expiry:         body.Expiry,
+		XRateRemaining: 10,
+		XRateLimitRest: 30,
 	}
 
 	r2.Decr(c.IP())
-	return nil
+
+	resp.XRateRemaining, _ = strconv.Atoi(val)
+
+	ttl, _ := r2.TTL(c.IP()).Result()
+	resp.XRateLimitRest = ttl / time.Nanosecond / time.Minute
+	resp.CustomShort = os.Getenv("BASE_URL") + "/" + id
+
+	c.Status(fiber.StatusOK).JSON(resp)
+
 }
